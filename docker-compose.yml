@@ -1,0 +1,163 @@
+# AliAI - Docker Compose Configuration
+
+version: '3.8'
+
+services:
+  clickhouse:
+    image: clickhouse/clickhouse-server:latest
+    container_name: aliai-clickhouse
+    ports:
+      - "9000:9000"
+      - "8123:8123"
+    volumes:
+      - clickhouse_data:/var/lib/clickhouse
+      - ./schema/clickhouse_schema.sql:/docker-entrypoint-initdb.d/init.sql
+    environment:
+      CLICKHOUSE_DB: aliexpress
+      CLICKHOUSE_USER: default
+      CLICKHOUSE_PASSWORD: ""
+    networks:
+      - aliai-network
+    restart: unless-stopped
+
+  redis:
+    image: redis:7-alpine
+    container_name: aliai-redis
+    ports:
+      - "6379:6379"
+    volumes:
+      - redis_data:/data
+    networks:
+      - aliai-network
+    restart: unless-stopped
+    command: redis-server --appendonly yes
+
+  postgres:
+    image: postgres:15
+    container_name: aliai-postgres
+    ports:
+      - "5432:5432"
+    environment:
+      POSTGRES_DB: airflow
+      POSTGRES_USER: airflow
+      POSTGRES_PASSWORD: airflow
+    volumes:
+      - postgres_data:/var/lib/postgresql/data
+    networks:
+      - aliai-network
+    restart: unless-stopped
+
+  aliai-scraper:
+    build: .
+    container_name: aliai-scraper
+    depends_on:
+      - clickhouse
+      - redis
+      - postgres
+    environment:
+      - CLICKHOUSE_HOST=clickhouse
+      - REDIS_HOST=redis
+      - AIRFLOW_DB_CONN=postgresql://airflow:airflow@postgres:5432/airflow
+    volumes:
+      - ./data:/app/data
+      - ./logs:/app/logs
+      - ./.env:/app/.env
+    networks:
+      - aliai-network
+    restart: unless-stopped
+    command: python main.py --mode full
+
+  airflow-webserver:
+    build: .
+    container_name: aliai-airflow-webserver
+    depends_on:
+      - postgres
+      - redis
+    environment:
+      - AIRFLOW_DB_CONN=postgresql://airflow:airflow@postgres:5432/airflow
+      - AIRFLOW_EXECUTOR=LocalExecutor
+      - AIRFLOW__CORE__LOAD_EXAMPLES=False
+    ports:
+      - "8080:8080"
+    volumes:
+      - ./airflow/dags:/opt/airflow/dags
+      - ./airflow/logs:/opt/airflow/logs
+      - ./airflow/plugins:/opt/airflow/plugins
+      - ./.env:/app/.env
+    networks:
+      - aliai-network
+    restart: unless-stopped
+    command: airflow webserver
+
+  airflow-scheduler:
+    build: .
+    container_name: aliai-airflow-scheduler
+    depends_on:
+      - postgres
+      - redis
+    environment:
+      - AIRFLOW_DB_CONN=postgresql://airflow:airflow@postgres:5432/airflow
+      - AIRFLOW_EXECUTOR=LocalExecutor
+      - AIRFLOW__CORE__LOAD_EXAMPLES=False
+    volumes:
+      - ./airflow/dags:/opt/airflow/dags
+      - ./airflow/logs:/opt/airflow/logs
+      - ./airflow/plugins:/opt/airflow/plugins
+      - ./.env:/app/.env
+    networks:
+      - aliai-network
+    restart: unless-stopped
+    command: airflow scheduler
+
+  prometheus:
+    image: prom/prometheus:latest
+    container_name: aliai-prometheus
+    ports:
+      - "9090:9090"
+    volumes:
+      - ./monitoring/prometheus.yml:/etc/prometheus/prometheus.yml
+      - prometheus_data:/prometheus
+    networks:
+      - aliai-network
+    restart: unless-stopped
+    command:
+      - '--config.file=/etc/prometheus/prometheus.yml'
+      - '--storage.tsdb.path=/prometheus'
+      - '--web.console.libraries=/etc/prometheus/console_libraries'
+      - '--web.console.templates=/etc/prometheus/consoles'
+      - '--storage.tsdb.retention.time=200h'
+      - '--web.enable-lifecycle'
+
+  grafana:
+    image: grafana/grafana:latest
+    container_name: aliai-grafana
+    ports:
+      - "3000:3000"
+    environment:
+      - GF_SECURITY_ADMIN_PASSWORD=admin
+    volumes:
+      - grafana_data:/var/lib/grafana
+      - ./monitoring/grafana/dashboards:/etc/grafana/provisioning/dashboards
+      - ./monitoring/grafana/datasources:/etc/grafana/provisioning/datasources
+    networks:
+      - aliai-network
+    restart: unless-stopped
+
+volumes:
+  clickhouse_data:
+    driver: local
+  redis_data:
+    driver: local
+  postgres_data:
+    driver: local
+  prometheus_data:
+    driver: local
+  grafana_data:
+    driver: local
+
+networks:
+  aliai-network:
+    driver: bridge
+    ipam:
+      config:
+        - subnet: 172.20.0.0/16

@@ -1,0 +1,58 @@
+# AliAI Requirements
+# Core dependencies for AliExpress scraping and analysis system
+
+# Web Scraping
+selenium==4.15.2
+playwright==1.40.0
+requests==2.31.0
+beautifulsoup4==4.12.2
+lxml==4.9.3
+scrapy==2.11.0
+
+# Database
+clickhouse-driver==0.2.6
+sqlalchemy==1.4.53
+redis==5.0.1
+
+# AI/ML
+openai==1.3.7
+transformers==4.36.2
+torch==2.1.1
+scikit-learn==1.3.2
+pandas==2.1.4
+nappy==1.26.2
+
+# Data Processing
+pydantic==2.5.0
+python-dotenv==1.0.0
+aiohttp==3.9.1
+asyncio==3.4.3
+
+# Workflow & Scheduling
+apache-airflow==2.7.3
+celery==5.3.4
+schedule==1.2.0
+
+# Monitoring & Logging
+prometheus-client==0.19.0
+grafana-api==1.0.3
+structlog==23.2.0
+loguru==0.7.2
+
+# Utilities
+python-dateutil==2.8.2
+pytz==2023.3
+fake-useragent==1.4.0
+undetected-chromedriver==3.5.4
+
+# Development
+pytest==7.4.3
+pytest-asyncio==0.21.1
+black==23.11.0
+flake8==6.1.0
+mypy==1.7.1
+
+# Optional: For advanced scraping
+scrapy-splash==0.8.0
+scrapy-proxy==0.2
+scrapy-user-agents==0.1.1
