@@ -39,7 +39,7 @@ scraping_dag = DAG(
     'aliexpress_daily_scraping',
     default_args=default_args,
     description='Daily AliExpress product scraping and analysis',
-    schedule_interval='0 2 * * *',  # Run daily at 2 AM
+    schedule='0 2 * * *',  # Run daily at 2 AM
     max_active_runs=1,
     tags=['scraping', 'aliexpress', 'daily']
 )
@@ -49,7 +49,7 @@ analysis_dag = DAG(
     'aliexpress_weekly_analysis',
     default_args=default_args,
     description='Weekly business intelligence analysis',
-    schedule_interval='0 6 * * 1',  # Run weekly on Monday at 6 AM
+    schedule='0 6 * * 1',  # Run weekly on Monday at 6 AM
     max_active_runs=1,
     tags=['analysis', 'business-intelligence', 'weekly']
 )
@@ -59,7 +59,7 @@ monitoring_dag = DAG(
     'aliexpress_monitoring',
     default_args=default_args,
     description='Real-time monitoring and health checks',
-    schedule_interval='*/15 * * * *',  # Run every 15 minutes
+    schedule='*/15 * * * *',  # Run every 15 minutes
     max_active_runs=1,
     tags=['monitoring', 'health-checks', 'real-time']
 )

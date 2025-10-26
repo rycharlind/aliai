@@ -69,6 +69,9 @@ LOG_LEVEL=INFO
 METRICS_ENABLED=true
 ```
 
+## Get Airflow UI username/password
+`docker compose logs airflow-webserver | grep "Password for user 'admin'"`
+
 ## Architecture
 
 See [ARCHITECTURE.md](ARCHITECTURE.md) for detailed system design.

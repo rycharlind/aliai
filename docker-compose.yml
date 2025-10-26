@@ -1,7 +1,5 @@
 # AliAI - Docker Compose Configuration
 
-version: '3.8'
-
 services:
   clickhouse:
     image: clickhouse/clickhouse-server:latest
@@ -67,16 +65,40 @@ services:
     restart: unless-stopped
     command: python main.py --mode full
 
+  airflow-init:
+    build: .
+    container_name: aliai-airflow-init
+    depends_on:
+      - postgres
+    environment:
+      - AIRFLOW__DATABASE__SQL_ALCHEMY_CONN=postgresql+psycopg2://airflow:airflow@postgres:5432/airflow
+      - AIRFLOW__CORE__EXECUTOR=LocalExecutor
+      - AIRFLOW__CORE__LOAD_EXAMPLES=False
+      - AIRFLOW__CORE__FERNET_KEY=XD01FFTSIHWNESBuWKzEzqhHNtspfYBZgmNC-C0DW98=
+      - AIRFLOW__API__SECRET_KEY=your-secret-key-here
+    volumes:
+      - ./airflow/dags:/opt/airflow/dags
+      - ./airflow/logs:/opt/airflow/logs
+      - ./airflow/plugins:/opt/airflow/plugins
+      - ./.env:/app/.env
+      - ./airflow-init.sh:/app/airflow-init.sh
+    networks:
+      - aliai-network
+    command: /app/airflow-init.sh
+
   airflow-webserver:
     build: .
     container_name: aliai-airflow-webserver
     depends_on:
       - postgres
       - redis
+      - airflow-init
     environment:
-      - AIRFLOW_DB_CONN=postgresql://airflow:airflow@postgres:5432/airflow
-      - AIRFLOW_EXECUTOR=LocalExecutor
+      - AIRFLOW__DATABASE__SQL_ALCHEMY_CONN=postgresql+psycopg2://airflow:airflow@postgres:5432/airflow
+      - AIRFLOW__CORE__EXECUTOR=LocalExecutor
       - AIRFLOW__CORE__LOAD_EXAMPLES=False
+      - AIRFLOW__CORE__FERNET_KEY=XD01FFTSIHWNESBuWKzEzqhHNtspfYBZgmNC-C0DW98=
+      - AIRFLOW__API__SECRET_KEY=your-secret-key-here
     ports:
       - "8080:8080"
     volumes:
@@ -87,7 +109,7 @@ services:
     networks:
       - aliai-network
     restart: unless-stopped
-    command: airflow webserver
+    command: airflow api-server
 
   airflow-scheduler:
     build: .
@@ -95,10 +117,13 @@ services:
     depends_on:
       - postgres
       - redis
+      - airflow-init
     environment:
-      - AIRFLOW_DB_CONN=postgresql://airflow:airflow@postgres:5432/airflow
-      - AIRFLOW_EXECUTOR=LocalExecutor
+      - AIRFLOW__DATABASE__SQL_ALCHEMY_CONN=postgresql+psycopg2://airflow:airflow@postgres:5432/airflow
+      - AIRFLOW__CORE__EXECUTOR=LocalExecutor
       - AIRFLOW__CORE__LOAD_EXAMPLES=False
+      - AIRFLOW__CORE__FERNET_KEY=XD01FFTSIHWNESBuWKzEzqhHNtspfYBZgmNC-C0DW98=
+      - AIRFLOW__API__SECRET_KEY=your-secret-key-here
     volumes:
       - ./airflow/dags:/opt/airflow/dags
       - ./airflow/logs:/opt/airflow/logs
@@ -160,4 +185,4 @@ networks:
     driver: bridge
     ipam:
       config:
-        - subnet: 172.20.0.0/16
+        - subnet: 172.25.0.0/16
