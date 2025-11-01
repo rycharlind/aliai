@@ -14,7 +14,7 @@ import requests
 from bs4 import BeautifulSoup
 from fake_useragent import UserAgent
 from loguru import logger
-from aliai.config import get_config
+from config import get_config
 
 
 @dataclass
@@ -145,7 +145,7 @@ class AliExpressScraper:
             self.config.scraping.rate_limit_per_hour
         )
         self.proxy_manager = ProxyManager(
-            self.config.proxy.proxy_list,
+            self.config.proxy.proxy_list_parsed,
             self.config.proxy.rotation
         )
         self.session = None
@@ -410,7 +410,7 @@ async def main():
     """Example usage of the scraper"""
     async with AliExpressScraper() as scraper:
         # Scrape a specific product
-        product = await scraper.scrape_product("https://www.aliexpress.com/item/example")
+        product = await scraper.scrape_product("https://www.aliexpress.com/item/3256810016116999.html")
         if product:
             print(f"Scraped product: {product.title}")
         
