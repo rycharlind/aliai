@@ -1,9 +1,9 @@
 """
 AliAI - Database Initialization Script
-Creates ClickHouse database and tables
+Convenience script for initial database setup (first-time initialization)
+For ongoing migrations, use: python scripts/migrate.py migrate
 """
 
-import asyncio
 import sys
 from pathlib import Path
 
@@ -12,75 +12,67 @@ project_root = Path(__file__).parent.parent
 sys.path.append(str(project_root))
 
 from aliai.database import ClickHouseClient
-from aliai.config import get_config
+from aliai.migrations import MigrationManager
 
 
-async def init_database():
-    """Initialize ClickHouse database and tables"""
-    config = get_config()
-    
+def init_database():
+    """Initialize ClickHouse database using migration system"""
     print("Initializing AliAI database...")
     
     try:
-        # Connect to ClickHouse
+        # Test connection first
         db = ClickHouseClient()
         
-        # Test connection
         if not db.test_connection():
             print("❌ Failed to connect to ClickHouse")
             return False
         
         print("✅ Connected to ClickHouse")
+        db.close()
         
-        # Read schema file
-        schema_file = project_root / "schema" / "clickhouse_schema.sql"
+        # Run migrations
+        print("\nRunning database migrations...")
+        manager = MigrationManager()
         
-        if not schema_file.exists():
-            print(f"❌ Schema file not found: {schema_file}")
-            return False
+        # Check current status
+        status = manager.get_status()
+        print(f"  Found {status['total_files']} migration file(s)")
+        print(f"  {status['applied']} already applied, {status['pending']} pending")
         
-        with open(schema_file, 'r') as f:
-            schema_sql = f.read()
+        # Apply migrations
+        if status['pending'] > 0:
+            print("\nApplying pending migrations...")
+            success = manager.migrate()
+            
+            if not success:
+                print("❌ Migration failed")
+                manager.close()
+                return False
+            
+            print("✅ All migrations applied successfully")
+        else:
+            print("✅ Database is up to date")
         
-        # Split SQL statements
-        statements = [stmt.strip() for stmt in schema_sql.split(';') if stmt.strip()]
-        
-        print(f"Executing {len(statements)} SQL statements...")
-        
-        # Execute each statement
-        for i, statement in enumerate(statements, 1):
-            try:
-                if statement.upper().startswith('CREATE TABLE'):
-                    table_name = statement.split()[2]
-                    print(f"  {i}. Creating table: {table_name}")
-                elif statement.upper().startswith('CREATE MATERIALIZED VIEW'):
-                    view_name = statement.split()[3]
-                    print(f"  {i}. Creating materialized view: {view_name}")
-                elif statement.upper().startswith('CREATE INDEX'):
-                    index_name = statement.split()[2]
-                    print(f"  {i}. Creating index: {index_name}")
-                else:
-                    print(f"  {i}. Executing statement...")
-                
-                db.client.execute(statement)
-                
-            except Exception as e:
-                print(f"  ❌ Error executing statement {i}: {e}")
-                # Continue with other statements
-                continue
-        
-        print("✅ Database initialization completed")
+        manager.close()
         
         # Verify tables were created
+        print("\nVerifying database schema...")
+        db = ClickHouseClient()
+        
         tables_result = db.client.execute("SHOW TABLES")
         tables = [row[0] for row in tables_result]
         
-        print(f"\nCreated tables: {', '.join(tables)}")
+        # Filter out migrations table from output
+        user_tables = [t for t in tables if t != 'schema_migrations']
         
-        # Test data insertion
+        print(f"✅ Database tables: {', '.join(user_tables)}")
+        
+        # Test data insertion (optional - for development/testing)
         print("\nTesting data insertion...")
         
         # Insert sample data into categories
+        # Format: (category_id, category_name, parent_category_id, level, path,
+        #          seasonal_relevance, trend_score, product_count, avg_price)
         sample_categories = [
             ('electronics', 'Electronics', '', 1, 'Electronics', {'summer': 0.3, 'winter': 0.2}, 0.0, 0, 0.0),
             ('clothing', 'Clothing', '', 1, 'Clothing', {'summer': 0.8, 'winter': 0.9}, 0.0, 0, 0.0),
@@ -89,15 +81,33 @@ async def init_database():
             ('sports', 'Sports & Outdoors', '', 1, 'Sports & Outdoors', {'summer': 0.9, 'winter': 0.3}, 0.0, 0, 0.0)
         ]
         
-        insert_query = """
-        INSERT INTO categories (
-            category_id, category_name, parent_category_id, level, path,
-            seasonal_relevance, trend_score, product_count, avg_price, created_at, updated_at
-        ) VALUES
-        """
+        # Use ClickHouse native client execute method for proper data handling
+        # This is more reliable for Map types and complex data structures
         
-        for category_data in sample_categories:
-            db.client.execute(insert_query, category_data + (None, None))
+        columns = [
+            'category_id', 'category_name', 'parent_category_id', 'level', 'path',
+            'seasonal_relevance', 'trend_score', 'product_count', 'avg_price'
+        ]
+        
+        data = []
+        for cat_data in sample_categories:
+            row = [
+                cat_data[0],  # category_id
+                cat_data[1],  # category_name
+                cat_data[2],  # parent_category_id
+                cat_data[3],  # level
+                cat_data[4],  # path
+                cat_data[5],  # seasonal_relevance (Map)
+                cat_data[6],  # trend_score
+                cat_data[7],  # product_count
+                cat_data[8]   # avg_price
+            ]
+            data.append(row)
+        
+        db.client.execute(
+            'INSERT INTO categories ({}) VALUES'.format(','.join(columns)),
+            data
+        )
         
         print("✅ Sample data inserted")
         
@@ -112,12 +122,14 @@ async def init_database():
         
     except Exception as e:
         print(f"❌ Database initialization failed: {e}")
+        import traceback
+        traceback.print_exc()
         return False
 
 
-async def main():
+def main():
     """Main function"""
-    success = await init_database()
+    success = init_database()
     
     if success:
         print("\n🎉 Database initialization completed successfully!")
@@ -126,6 +138,7 @@ async def main():
         print("2. Start scraping: python main.py --mode scrape")
         print("3. Run analysis: python main.py --mode analyze")
         print("4. Generate insights: python main.py --mode insights")
+        print("\nFor future migrations, use: python scripts/migrate.py migrate")
     else:
         print("\n❌ Database initialization failed!")
         print("Please check your ClickHouse connection and try again.")
@@ -133,4 +146,4 @@ async def main():
 
 
 if __name__ == "__main__":
-    asyncio.run(main())
+    main()

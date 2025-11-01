@@ -1,8 +1,9 @@
--- ClickHouse Schema for AliExpress Product Analysis
--- Optimized for analytical queries and large-scale data processing
+-- Migration: 001_initial_schema.sql
+-- Description: Initial database schema with all core tables, views, and indexes
+-- Created: Initial migration
 
 -- Products table - Core product information
-CREATE TABLE products (
+CREATE TABLE IF NOT EXISTS products (
     product_id String,
     title String,
     price Decimal(10, 2),
@@ -42,7 +43,7 @@ ORDER BY (category_id, seller_id, scraped_at)
 SETTINGS index_granularity = 8192;
 
 -- Reviews table - User reviews and sentiment analysis
-CREATE TABLE reviews (
+CREATE TABLE IF NOT EXISTS reviews (
     review_id String,
     product_id String,
     user_id String,
@@ -66,7 +67,7 @@ ORDER BY (product_id, scraped_at)
 SETTINGS index_granularity = 8192;
 
 -- Categories table - Hierarchical product categorization
-CREATE TABLE categories (
+CREATE TABLE IF NOT EXISTS categories (
     category_id String,
     category_name String,
     parent_category_id String,
@@ -83,7 +84,7 @@ ORDER BY (level, category_id)
 SETTINGS index_granularity = 8192;
 
 -- Sellers table - Seller/distributor information
-CREATE TABLE sellers (
+CREATE TABLE IF NOT EXISTS sellers (
     seller_id String,
     seller_name String,
     store_url String,
@@ -106,7 +107,7 @@ ORDER BY (seller_id, created_at)
 SETTINGS index_granularity = 8192;
 
 -- Price history table - Track price changes over time
-CREATE TABLE price_history (
+CREATE TABLE IF NOT EXISTS price_history (
     product_id String,
     price Decimal(10, 2),
     original_price Decimal(10, 2),
@@ -120,7 +121,7 @@ ORDER BY (product_id, recorded_at)
 SETTINGS index_granularity = 8192;
 
 -- Trends table - Track trending products and categories
-CREATE TABLE trends (
+CREATE TABLE IF NOT EXISTS trends (
     trend_id String,
     product_id String,
     category_id String,
@@ -138,7 +139,7 @@ ORDER BY (trend_type, detected_at)
 SETTINGS index_granularity = 8192;
 
 -- Scraping logs table - Track scraping activities and performance
-CREATE TABLE scraping_logs (
+CREATE TABLE IF NOT EXISTS scraping_logs (
     log_id String,
     task_id String,
     url String,
@@ -157,7 +158,7 @@ SETTINGS index_granularity = 8192;
 -- Create materialized views for common analytics queries
 
 -- Top products by sales
-CREATE MATERIALIZED VIEW top_products_by_sales
+CREATE MATERIALIZED VIEW IF NOT EXISTS top_products_by_sales
 ENGINE = SummingMergeTree()
 ORDER BY (category_id, seller_id)
 AS SELECT
@@ -171,7 +172,7 @@ FROM products
 GROUP BY category_id, seller_id;
 
 -- Daily price changes
-CREATE MATERIALIZED VIEW daily_price_changes
+CREATE MATERIALIZED VIEW IF NOT EXISTS daily_price_changes
 ENGINE = SummingMergeTree()
 ORDER BY (product_id, date)
 AS SELECT
@@ -185,7 +186,7 @@ FROM price_history
 GROUP BY product_id, toDate(scraped_at);
 
 -- Sentiment analysis summary
-CREATE MATERIALIZED VIEW sentiment_summary
+CREATE MATERIALIZED VIEW IF NOT EXISTS sentiment_summary
 ENGINE = SummingMergeTree()
 ORDER BY (product_id, date)
 AS SELECT
@@ -200,7 +201,8 @@ FROM reviews
 GROUP BY product_id, toDate(scraped_at);
 
 -- Create indexes for better query performance
-CREATE INDEX idx_products_price ON products (price) TYPE minmax GRANULARITY 1;
-CREATE INDEX idx_products_rating ON products (average_rating) TYPE minmax GRANULARITY 1;
-CREATE INDEX idx_reviews_sentiment ON reviews (sentiment_score) TYPE minmax GRANULARITY 1;
-CREATE INDEX idx_price_history_date ON price_history (recorded_at) TYPE minmax GRANULARITY 1;
+CREATE INDEX IF NOT EXISTS idx_products_price ON products (price) TYPE minmax GRANULARITY 1;
+CREATE INDEX IF NOT EXISTS idx_products_rating ON products (average_rating) TYPE minmax GRANULARITY 1;
+CREATE INDEX IF NOT EXISTS idx_reviews_sentiment ON reviews (sentiment_score) TYPE minmax GRANULARITY 1;
+CREATE INDEX IF NOT EXISTS idx_price_history_date ON price_history (recorded_at) TYPE minmax GRANULARITY 1;
+

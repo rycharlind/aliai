@@ -14,7 +14,7 @@ import requests
 from bs4 import BeautifulSoup
 from fake_useragent import UserAgent
 from loguru import logger
-from config import get_config
+from .config import get_config
 
 
 @dataclass

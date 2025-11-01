@@ -35,15 +35,26 @@ class ClickHouseClient:
                 database=self.config.database.database
             )
             
-            # SQLAlchemy engine for pandas integration
-            connection_string = (
-                f"clickhouse://{self.config.database.user}:{self.config.database.password}"
-                f"@{self.config.database.host}:{self.config.database.port}"
-                f"/{self.config.database.database}"
-            )
-            self.engine = create_engine(connection_string)
-            
             logger.info("Connected to ClickHouse database")
+            
+            # SQLAlchemy engine for pandas integration (optional)
+            # Only create if clickhouse-sqlalchemy is available
+            try:
+                connection_string = (
+                    f"clickhouse://{self.config.database.user}:{self.config.database.password}"
+                    f"@{self.config.database.host}:{self.config.database.port}"
+                    f"/{self.config.database.database}"
+                )
+                self.engine = create_engine(connection_string)
+                logger.debug("SQLAlchemy engine created for pandas integration")
+            except Exception as sqlalchemy_error:
+                # SQLAlchemy engine is optional - only needed for pandas integration
+                logger.warning(
+                    f"Could not create SQLAlchemy engine (optional): {sqlalchemy_error}. "
+                    f"Install 'clickhouse-sqlalchemy' for pandas integration. "
+                    f"Core database operations will still work."
+                )
+                self.engine = None
             
         except Exception as e:
             logger.error(f"Failed to connect to ClickHouse: {e}")
@@ -418,7 +429,10 @@ class ClickHouseClient:
         if self.client:
             self.client.disconnect()
         if self.engine:
-            self.engine.dispose()
+            try:
+                self.engine.dispose()
+            except Exception:
+                pass  # Engine might not be initialized
         logger.info("Database connection closed")
 
 
