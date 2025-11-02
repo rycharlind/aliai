@@ -7,7 +7,7 @@ A scalable, AI-powered system for scraping AliExpress product data and performin
 - **Automated Scraping**: Respectful web scraping with rate limiting and proxy support
 - **AI-Powered Analysis**: Sentiment analysis, product categorization, and trend detection
 - **Scalable Storage**: ClickHouse database optimized for analytical queries
-- **Real-time Monitoring**: Health checks, error tracking, and performance metrics
+- **Real-time Monitoring**: Health **checks**, error tracking, and performance metrics
 - **Automated Scheduling**: Airflow-based workflow orchestration
 
 ## Quick Start
@@ -28,7 +28,7 @@ cd aliai
 
 # Install dependencies
 pip install -r requirements.txt
-
+****
 # Set up environment variables
 cp .env.example .env
 # Edit .env with your configuration

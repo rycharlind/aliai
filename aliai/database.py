@@ -424,6 +424,260 @@ class ClickHouseClient:
             logger.error(f"Failed to get trending products: {e}")
             return []
     
+    async def insert_master_product(
+        self, 
+        product_id: str, 
+        product_url: str, 
+        category_id: str, 
+        category_name: str
+    ) -> bool:
+        """
+        Insert or update a product in the master_products table with UPSERT logic
+        
+        Args:
+            product_id: The product ID
+            product_url: Full product URL
+            category_id: Category ID where discovered
+            category_name: Category name where discovered
+            
+        Returns:
+            True if successful, False otherwise
+        """
+        try:
+            # Use ReplacingMergeTree INSERT - ClickHouse will handle duplicates
+            query = """
+            INSERT INTO master_products (
+                product_id, product_url, category_id, category_name,
+                discovered_at, scrape_status, scrape_priority, error_count, is_active
+            ) VALUES (
+                %(product_id)s, %(product_url)s, %(category_id)s, %(category_name)s,
+                now(), 'pending', 5, 0, 1
+            )
+            """
+            
+            self.client.execute(query, {
+                'product_id': product_id,
+                'product_url': product_url,
+                'category_id': category_id,
+                'category_name': category_name
+            })
+            
+            logger.debug(f"Inserted master product: {product_id}")
+            return True
+            
+        except Exception as e:
+            logger.error(f"Failed to insert master product {product_id}: {e}")
+            return False
+    
+    async def batch_insert_master_products(self, products_list: List[Dict[str, Any]]) -> int:
+        """
+        Bulk insert discovered product IDs into master_products table
+        
+        Args:
+            products_list: List of dicts with product_id, product_url, category_id, category_name
+            
+        Returns:
+            Number of successfully inserted products
+        """
+        successful_inserts = 0
+        
+        for product in products_list:
+            if await self.insert_master_product(
+                product.get('product_id'),
+                product.get('product_url'),
+                product.get('category_id', ''),
+                product.get('category_name', '')
+            ):
+                successful_inserts += 1
+        
+        logger.info(f"Batch inserted {successful_inserts}/{len(products_list)} master products")
+        return successful_inserts
+    
+    async def get_products_to_scrape(
+        self, 
+        limit: int = 100, 
+        priority_threshold: int = 1,
+        status_filter: str = 'pending'
+    ) -> List[Dict[str, Any]]:
+        """
+        Query master_products for products needing full scrape
+        
+        Args:
+            limit: Maximum number of products to return
+            priority_threshold: Minimum priority level (1-10)
+            status_filter: Status to filter by ('pending', 'scraped', 'failed')
+            
+        Returns:
+            List of products with product_id and product_url
+        """
+        try:
+            query = f"""
+            SELECT 
+                product_id,
+                product_url,
+                category_id,
+                category_name,
+                scrape_priority,
+                error_count
+            FROM master_products
+            WHERE scrape_status = %(status_filter)s
+                AND scrape_priority >= %(priority_threshold)s
+                AND is_active = 1
+            ORDER BY scrape_priority DESC, discovered_at ASC
+            LIMIT {limit}
+            """
+            
+            result = self.client.execute(query, {
+                'status_filter': status_filter,
+                'priority_threshold': priority_threshold
+            })
+            
+            products = []
+            for row in result:
+                products.append({
+                    'product_id': row[0],
+                    'product_url': row[1],
+                    'category_id': row[2],
+                    'category_name': row[3],
+                    'scrape_priority': row[4],
+                    'error_count': row[5]
+                })
+            
+            return products
+            
+        except Exception as e:
+            logger.error(f"Failed to get products to scrape: {e}")
+            return []
+    
+    async def update_scrape_status(
+        self, 
+        product_id: str, 
+        status: str, 
+        error_message: str = None
+    ) -> bool:
+        """
+        Update scrape status and error tracking for a product
+        
+        Args:
+            product_id: The product ID
+            status: New status ('pending', 'scraped', 'failed', 'skipped')
+            error_message: Optional error message for failed scrapes
+            
+        Returns:
+            True if successful, False otherwise
+        """
+        try:
+            # If marking as failed, increment error count
+            if status == 'failed':
+                query = """
+                ALTER TABLE master_products UPDATE
+                    scrape_status = 'failed',
+                    error_count = error_count + 1
+                WHERE product_id = %(product_id)s
+                """
+            elif status == 'scraped':
+                query = """
+                ALTER TABLE master_products UPDATE
+                    scrape_status = 'scraped',
+                    last_scraped_at = now()
+                WHERE product_id = %(product_id)s
+                """
+            else:
+                query = """
+                ALTER TABLE master_products UPDATE
+                    scrape_status = %(status)s
+                WHERE product_id = %(product_id)s
+                """
+            
+            params = {'product_id': product_id}
+            if status != 'failed' and status != 'scraped':
+                params['status'] = status
+            
+            self.client.execute(query, params)
+            logger.debug(f"Updated scrape status for {product_id}: {status}")
+            return True
+            
+        except Exception as e:
+            logger.error(f"Failed to update scrape status for {product_id}: {e}")
+            return False
+    
+    async def mark_inactive_products(self, days_threshold: int = 30) -> int:
+        """
+        Mark products as inactive if not seen in recent scans
+        
+        Args:
+            days_threshold: Number of days since last discovery
+            
+        Returns:
+            Number of products marked as inactive
+        """
+        try:
+            query = f"""
+            ALTER TABLE master_products UPDATE
+                is_active = 0
+            WHERE discovered_at < now() - INTERVAL {days_threshold} DAY
+                AND is_active = 1
+                AND scrape_status = 'pending'
+            """
+            
+            self.client.execute(query)
+            
+            # Count updated rows
+            count_query = """
+            SELECT count()
+            FROM master_products
+            WHERE is_active = 0
+                AND discovered_at >= now() - INTERVAL 1 HOUR
+            """
+            
+            result = self.client.execute(count_query)
+            count = result[0][0] if result else 0
+            
+            logger.info(f"Marked {count} products as inactive")
+            return count
+            
+        except Exception as e:
+            logger.error(f"Failed to mark inactive products: {e}")
+            return 0
+    
+    async def cleanup_failed_products(self, error_threshold: int = 5) -> int:
+        """
+        Mark products with too many errors as 'skipped'
+        
+        Args:
+            error_threshold: Maximum number of errors before skipping
+            
+        Returns:
+            Number of products marked as skipped
+        """
+        try:
+            query = f"""
+            ALTER TABLE master_products UPDATE
+                scrape_status = 'skipped'
+            WHERE error_count >= {error_threshold}
+                AND scrape_status = 'failed'
+            """
+            
+            self.client.execute(query)
+            
+            # Count updated rows
+            count_query = f"""
+            SELECT count()
+            FROM master_products
+            WHERE scrape_status = 'skipped'
+                AND error_count >= {error_threshold}
+            """
+            
+            result = self.client.execute(count_query)
+            count = result[0][0] if result else 0
+            
+            logger.info(f"Marked {count} failed products as skipped")
+            return count
+            
+        except Exception as e:
+            logger.error(f"Failed to cleanup failed products: {e}")
+            return 0
+    
     def close(self):
         """Close database connection"""
         if self.client:

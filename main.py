@@ -13,6 +13,18 @@ from aliai.scraper import AliExpressScraper
 from aliai.ai_processor import AIProcessor
 from aliai.database import ClickHouseClient
 from aliai.analytics import AnalyticsEngine
+from aliai.jobs import (
+    discover_category_ids,
+    discover_all_category_ids,
+    update_products_batch,
+    update_single_product,
+    update_high_priority_products,
+    refresh_category,
+    mark_inactive_products,
+    cleanup_failed_products,
+    calculate_priorities,
+    boost_category_priority
+)
 
 
 class AliAIApp:
@@ -181,12 +193,22 @@ class AliAIApp:
 async def main():
     """Main entry point"""
     parser = argparse.ArgumentParser(description='AliAI - AliExpress Scraping & Analysis System')
-    parser.add_argument('--mode', choices=['scrape', 'analyze', 'insights', 'full'], 
-                       default='full', help='Operation mode')
+    parser.add_argument('--mode', choices=[
+        'scrape', 'analyze', 'insights', 'full',
+        'discover', 'discover-all', 'update', 'update-batch',
+        'refresh', 'cleanup', 'prioritize'
+    ], default='full', help='Operation mode')
     parser.add_argument('--categories', nargs='+', help='Category URLs to scrape')
     parser.add_argument('--search', nargs='+', help='Search terms to scrape')
     parser.add_argument('--pages', type=int, default=5, help='Maximum pages to scrape')
     parser.add_argument('--verbose', '-v', action='store_true', help='Verbose logging')
+    
+    # Discovery and update arguments
+    parser.add_argument('--size', type=int, default=100, help='Batch size for updates')
+    parser.add_argument('--priority', type=int, default=1, help='Minimum priority level')
+    parser.add_argument('--category-url', type=str, help='Single category URL for operations')
+    parser.add_argument('--product-id', type=str, help='Single product ID for update')
+    parser.add_argument('--error-threshold', type=int, default=5, help='Error threshold for cleanup')
     
     args = parser.parse_args()
     
@@ -195,6 +217,61 @@ async def main():
         logger.remove()
         logger.add(sys.stdout, level="DEBUG")
     
+    # Check if this is a job-based mode that doesn't need AliAIApp
+    if args.mode in ['discover', 'discover-all', 'update', 'update-batch', 'refresh', 'cleanup', 'prioritize']:
+        try:
+            if args.mode == 'discover':
+                if not args.category_url:
+                    logger.error("--category-url is required for discover mode")
+                    return
+                count = await discover_category_ids(args.category_url, args.pages)
+                print(f"Discovered {count} products")
+                
+            elif args.mode == 'discover-all':
+                results = await discover_all_category_ids(max_pages_per_category=args.pages)
+                print(f"\n=== DISCOVERY RESULTS ===")
+                for category_name, count in results.items():
+                    print(f"{category_name}: {count} products")
+                total = sum(results.values())
+                print(f"\nTotal: {total} products discovered")
+                
+            elif args.mode == 'update':
+                if not args.product_id:
+                    logger.error("--product-id is required for update mode")
+                    return
+                success = await update_single_product(args.product_id)
+                print(f"Update successful: {success}")
+                
+            elif args.mode == 'update-batch':
+                count = await update_products_batch(
+                    batch_size=args.size,
+                    priority_min=args.priority,
+                    status_filter='pending'
+                )
+                print(f"Updated {count} products")
+                
+            elif args.mode == 'refresh':
+                if not args.category_url:
+                    logger.error("--category-url is required for refresh mode")
+                    return
+                count = await refresh_category(args.category_url)
+                print(f"Refreshed {count} products")
+                
+            elif args.mode == 'cleanup':
+                count = await cleanup_failed_products(error_threshold=args.error_threshold)
+                print(f"Cleaned up {count} failed products")
+                
+            elif args.mode == 'prioritize':
+                count = await calculate_priorities()
+                print(f"Updated priorities for products")
+                
+        except KeyboardInterrupt:
+            logger.info("Operation interrupted by user")
+        except Exception as e:
+            logger.error(f"Operation failed: {e}")
+        return
+    
+    # Legacy modes that use AliAIApp
     app = AliAIApp()
     
     try:

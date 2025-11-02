@@ -5,8 +5,9 @@ Handles web scraping with rate limiting, proxy support, and retry logic
 
 import asyncio
 import random
+import re
 import time
-from typing import List, Dict, Optional, Any, Union
+from typing import List, Dict, Optional, Any, Union, Tuple
 from dataclasses import dataclass
 from urllib.parse import urljoin, urlparse
 import aiohttp
@@ -30,6 +31,15 @@ class ScrapingResult:
 
 
 @dataclass
+class DiscoveredProduct:
+    """Lightweight product information for discovery purposes"""
+    product_id: str
+    product_url: str
+    category_id: str = ""
+    category_name: str = ""
+
+
+@dataclass
 class ProductData:
     """Structured product data from AliExpress"""
     product_id: str
@@ -45,16 +55,26 @@ class ProductData:
     seller_rating: Optional[float]
     category_id: str
     category_name: str
-    brand: Optional[str]
-    product_url: str
-    image_urls: List[str]
-    tags: List[str]
-    total_reviews: int
-    average_rating: Optional[float]
-    total_sales: int
-    stock_quantity: Optional[int]
-    is_available: bool
-    scraped_at: str
+    subcategory_id: str = ""
+    subcategory_name: str = ""
+    brand: Optional[str] = None
+    sku: str = ""
+    product_url: str = ""
+    image_urls: List[str] = None
+    tags: List[str] = None
+    total_reviews: int = 0
+    average_rating: Optional[float] = None
+    total_sales: int = 0
+    stock_quantity: Optional[int] = None
+    is_available: bool = True
+    scraped_at: str = ""
+    
+    def __post_init__(self):
+        """Initialize mutable default values"""
+        if self.image_urls is None:
+            self.image_urls = []
+        if self.tags is None:
+            self.tags = []
 
 
 class RateLimiter:
@@ -294,12 +314,10 @@ class AliExpressScraper:
     
     def _extract_product_id(self, url: str) -> str:
         """Extract product ID from URL"""
-        # AliExpress URLs typically contain product IDs
-        # This is a simplified extraction - would need more robust parsing
-        parts = url.split('/')
-        for part in parts:
-            if part.startswith('item/') or part.startswith('product/'):
-                return part.split('/')[-1].split('.')[0]
+        # AliExpress URLs: /item/3256810016116999.html or /product/123456.html
+        match = re.search(r'/(?:item|product)/(\d+)(?:\.html)?', url)
+        if match:
+            return match.group(1)
         return "unknown"
     
     def _extract_seller_id(self, seller_url: str) -> str:
@@ -321,6 +339,113 @@ class AliExpressScraper:
             if part.startswith('category/') or part.startswith('cat/'):
                 return part.split('/')[-1]
         return "unknown"
+    
+    def extract_product_ids_from_listing(self, html: str, base_url: str) -> List[Tuple[str, str]]:
+        """
+        Extract product IDs and URLs from a category listing page HTML
+        
+        Args:
+            html: HTML content of the listing page
+            base_url: Base URL for constructing absolute URLs
+            
+        Returns:
+            List of tuples (product_id, product_url)
+        """
+        product_ids = []
+        soup = BeautifulSoup(html, 'html.parser')
+        
+        # Look for common product link patterns
+        # Pattern 1: Links with /item/ or /product/
+        product_links = soup.find_all('a', href=True)
+        
+        for link in product_links:
+            href = link.get('href', '')
+            if not href:
+                continue
+                
+            # Try to extract product ID from URL
+            # AliExpress URLs: /item/3256810016116999.html or /product/123456.html
+            match = re.search(r'/(?:item|product)/(\d+)(?:\.html)?', href)
+            if match:
+                product_id = match.group(1)
+                # Construct full URL
+                if href.startswith('http'):
+                    product_url = href
+                else:
+                    product_url = urljoin(base_url, href)
+                
+                if product_id and product_url:
+                    product_ids.append((product_id, product_url))
+        
+        # Remove duplicates while preserving order
+        seen = set()
+        unique_products = []
+        for product_id, product_url in product_ids:
+            if product_id not in seen:
+                seen.add(product_id)
+                unique_products.append((product_id, product_url))
+        
+        logger.debug(f"Extracted {len(unique_products)} unique product IDs from listing")
+        return unique_products
+    
+    async def scrape_category_for_ids(
+        self, 
+        category_url: str, 
+        max_pages: int = 10,
+        category_id: str = "",
+        category_name: str = ""
+    ) -> List[DiscoveredProduct]:
+        """
+        Lightweight scraping to discover product IDs from category listing pages
+        Does not fetch full product details, only extracts IDs and URLs
+        
+        Args:
+            category_url: URL of the category page
+            max_pages: Maximum number of pages to scan
+            category_id: Category ID for discovered products
+            category_name: Category name for discovered products
+            
+        Returns:
+            List of DiscoveredProduct objects
+        """
+        logger.info(f"Discovering product IDs from category: {category_url} (max {max_pages} pages)")
+        
+        discovered_products = []
+        
+        for page in range(1, max_pages + 1):
+            # Construct page URL
+            if '?' in category_url:
+                page_url = f"{category_url}&page={page}"
+            else:
+                page_url = f"{category_url}?page={page}"
+            
+            result = await self._make_request(page_url)
+            
+            if result.error or result.status_code != 200:
+                logger.error(f"Failed to scrape category page {page}: {result.error}")
+                continue
+            
+            # Extract product IDs from the listing page
+            product_ids = self.extract_product_ids_from_listing(result.content, self.base_url)
+            
+            if not product_ids:
+                logger.info(f"No more products found on page {page}")
+                break
+            
+            # Convert to DiscoveredProduct objects
+            for product_id, product_url in product_ids:
+                discovered_products.append(DiscoveredProduct(
+                    product_id=product_id,
+                    product_url=product_url,
+                    category_id=category_id,
+                    category_name=category_name
+                ))
+            
+            # Add delay between pages
+            await asyncio.sleep(self.config.scraping.request_delay)
+        
+        logger.info(f"Discovered {len(discovered_products)} product IDs from category")
+        return discovered_products
     
     def _parse_price(self, price_text: str) -> float:
         """Parse price from text"""
